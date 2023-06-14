@@ -9,7 +9,7 @@ const fs = require('fs');
 const moment = require('moment');
 const path = require('path');
 const { verifyAccessToken } = require('./helper/jwt_helper')
-const createConnection = require('../helper/init_mysql')
+const createConnection = require('./helper/init_mysql')
 const AuthRoute = require('./routes/Auth.route');
 const ProfilRoute = require('./routes/profil.route')
 
@@ -28,24 +28,6 @@ app.get('/', verifyAccessToken, async (req, res, next) => {
 
 app.use('/auth', AuthRoute);
 app.use('/profil', ProfilRoute);
-
-app.use((req, res, next) =>{
-    const err = new Error("Not found")
-    err.status = 404
-    next(err)
-})
-
-//Error handler
-app.use((err, req, res, next) =>{
-    res.status(err.status || 500)
-    res.send({
-        error: {
-            status: err.status || 500,
-            message: err.message
-    }
-
-    })
-})
 
 // API endpoint to retrieve nutrition values by IDs
 app.get('/nutrition', (req, res) => {
@@ -73,10 +55,29 @@ app.get('/nutrition', (req, res) => {
     });
   });
 
+  // API endpoint to get video links
+app.get('/videos', (req, res) => {
+  const query = 'SELECT * FROM videos';
+  
+  connection.query(query, (err, result) => {
+    if (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Gagal mendapatkan data video' });
+    } else {
+      res.json(result);
+    }
+  });
+});
+
   const upload = multer();
 
+const pathKey = path.resolve('./keyfile.json');
+
 // Create a new instance of the GCS client
-const gcs = new Storage();
+const gcs = new Storage({
+  projectId: 'nufochild',
+  keyFilename: pathKey
+});
 
 // Specify the name of your GCS bucket
 const bucketName = 'nufochild-photo';
@@ -120,12 +121,48 @@ app.post('/upload', upload.single('image'), ImgUpload.uploadToGcs, (req, res) =>
   if (!req.file) {
     res.status(400).json({ error: 'No image file provided' });
   } else {
-    res.json({ imageUrl: req.file.cloudStoragePublicUrl });
+    const imageUrl = req.file.cloudStoragePublicUrl;
+    const predictImageEndpoint = 'https://fastapi-model-ml-rezeodju2q-et.a.run.app/predict_image';
+    const predictImageUrl = `${predictImageEndpoint}?url=${encodeURIComponent(imageUrl)}`;
+
+    // Make a POST request to predict_image endpoint
+    fetch(predictImageUrl, {
+      method: 'POST'
+    })
+      .then(response => {
+        if (response.ok) {
+          return response.json();
+        } else {
+          throw new Error('Failed to retrieve image from URL');
+        }
+      })
+      .then(result => {
+        res.json({ imageUrl: imageUrl, prediction: result.result });
+      })
+      .catch(error => {
+        res.status(500).json({ error: 'Internal Server Error' });
+      });
   }
 });
 
-const port = process.env.PORT || 8080;
-// Start the server
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-  });
+app.use((req, res, next) =>{
+  const err = new Error("Not found")
+  err.status = 404
+  next(err)
+})
+
+//Error handler
+app.use((err, req, res, next) =>{
+  res.status(err.status || 500)
+  res.send({
+      error: {
+          status: err.status || 500,
+          message: err.message
+  }
+
+  })
+})
+
+app.listen(3000, () => {
+  console.log('Server serving in port 3000')
+})
